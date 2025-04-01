@@ -6,11 +6,12 @@ import 'package:rrd/HomePage.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-
+import 'package:geolocator/geolocator.dart';
 
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
+
 class SignUpPage2 extends StatefulWidget {
   @override
   _SignUpPage2State createState() => _SignUpPage2State();
@@ -21,7 +22,7 @@ class _SignUpPage2State extends State<SignUpPage2> {
   final TextEditingController contactController = TextEditingController();
   final TextEditingController locationController = TextEditingController();
   String? selectedBloodType;
-  LatLng? _currentLocation;
+  LatLng? selectedLocation;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   User? user = FirebaseAuth.instance.currentUser;
 
@@ -29,10 +30,92 @@ class _SignUpPage2State extends State<SignUpPage2> {
   final FocusNode contactFocus = FocusNode();
   final FocusNode locationFocus = FocusNode();
 
-  LatLng? selectedLocation;
+  LatLng? _currentLocation;
   bool isSearchingLocation = false;
   List<Map<String, dynamic>> _locationSuggestions = [];
   Timer? _debounce;
+  bool _isLoadingLocation = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _getCurrentLocation();
+  }
+
+  Future<void> _getCurrentLocation() async {
+    setState(() {
+      _isLoadingLocation = true;
+    });
+
+    try {
+      // Check if location services are enabled
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Location services are disabled. Please enable them.")),
+        );
+        setState(() {
+          _isLoadingLocation = false;
+        });
+        return;
+      }
+
+      // Check location permission
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Location permission denied")),
+          );
+          setState(() {
+            _isLoadingLocation = false;
+          });
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Location permission permanently denied")),
+        );
+        setState(() {
+          _isLoadingLocation = false;
+        });
+        return;
+      }
+
+      // Get current position
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: Duration(seconds: 10),
+      );
+
+      // Convert position to LatLng
+      LatLng location = LatLng(position.latitude, position.longitude);
+
+      // Get address from coordinates with timeout
+      String address = await _getAddressFromCoordinates(location);
+
+      if (mounted) {  // Check if widget is still mounted
+        setState(() {
+          selectedLocation = location;
+          locationController.text = address;
+          _isLoadingLocation = false;
+        });
+      }
+    } catch (e) {
+      print("Error getting location: $e");
+      if (mounted) {  // Check if widget is still mounted
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error getting location: ${e.toString()}")),
+        );
+        setState(() {
+          _isLoadingLocation = false;
+        });
+      }
+    }
+  }
 
   // Fetch suggestions from OSM Nominatim
   Future<void> _getLocationSuggestions(String query) async {
@@ -150,37 +233,54 @@ class _SignUpPage2State extends State<SignUpPage2> {
     }
   }
 
-
-
   Future<String> _getAddressFromCoordinates(LatLng latLng) async {
     try {
       List<Placemark> placemarks = await placemarkFromCoordinates(
-          latLng.latitude, latLng.longitude);
+        latLng.latitude,
+        latLng.longitude,
+      );
+      
       if (placemarks.isNotEmpty) {
         Placemark place = placemarks.first;
-        return "${place.locality}, ${place.administrativeArea}, ${place.country}";
+        String address = "";
+        
+        if (place.locality?.isNotEmpty ?? false) {
+          address += place.locality!;
+        }
+        if (place.administrativeArea?.isNotEmpty ?? false) {
+          if (address.isNotEmpty) address += ", ";
+          address += place.administrativeArea!;
+        }
+        if (place.country?.isNotEmpty ?? false) {
+          if (address.isNotEmpty) address += ", ";
+          address += place.country!;
+        }
+        
+        return address.isNotEmpty ? address : "${latLng.latitude}, ${latLng.longitude}";
       }
     } catch (e) {
       print("Error in reverse geocoding: $e");
     }
     return "${latLng.latitude}, ${latLng.longitude}";
   }
+
   void _openMap() {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => MapPage(
-          initialLocation: _currentLocation ?? LatLng(20.5937, 78.9629),
-          onLocationSelected: (LatLng location) async {
-            String address = await _getAddressFromCoordinates(location);
-            setState(() {
-              _currentLocation = location;
-              locationController.text = address;
-            });
-          },
+        builder: (context) => MapLocationPicker(
+          initialLocation: selectedLocation ?? LatLng(20.5937, 78.9629),
         ),
       ),
-    );
+    ).then((value) async {
+      if (value != null) {
+        String address = await _getAddressFromCoordinates(value);
+        setState(() {
+          selectedLocation = value;
+          locationController.text = address;
+        });
+      }
+    });
   }
 
   @override
@@ -261,8 +361,7 @@ class _SignUpPage2State extends State<SignUpPage2> {
                 controller: locationController,
                 decoration: InputDecoration(
                   filled: true,
-                  fillColor: Color.fromARGB(255, 255, 255, 255), // Light yellow background color
-                  // hintText: "Enter location",
+                  fillColor: Color.fromARGB(255, 255, 255, 255),
                   contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.only(
@@ -271,28 +370,85 @@ class _SignUpPage2State extends State<SignUpPage2> {
                       bottomLeft: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
                       bottomRight: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
                     ),
-                    // borderSide: BorderSide(color: const Color.fromARGB(255, 0, 0, 0)),
                   ),
                   enabledBorder: OutlineInputBorder(
-                  
                     borderRadius: BorderRadius.only(
                       topLeft: Radius.circular(4),
                       topRight: Radius.circular(4),
                       bottomLeft: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
                       bottomRight: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
                     ),
-                    // borderSide: BorderSide(color: const Color.fromARGB(255, 0, 0, 0)),
                   ),
-                  suffixIcon: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: IconButton(
-                      icon: Icon(Icons.map, color: Colors.red[800]),
-                      onPressed: _openMap,
-                    ),
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_isLoadingLocation)
+                        Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.red[800],
+                            ),
+                          ),
+                        )
+                      else
+                        IconButton(
+                          icon: Icon(Icons.search, color: Colors.red[800]),
+                          onPressed: () async {
+                            if (locationController.text.isNotEmpty) {
+                              try {
+                                List<Location> locations = await locationFromAddress(locationController.text);
+                                if (locations.isNotEmpty) {
+                                  LatLng location = LatLng(
+                                    locations.first.latitude,
+                                    locations.first.longitude,
+                                  );
+                                  setState(() {
+                                    selectedLocation = location;
+                                  });
+                                  // Open map with the searched location
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => MapLocationPicker(
+                                        initialLocation: location,
+                                      ),
+                                    ),
+                                  ).then((value) {
+                                    if (value != null) {
+                                      setState(() {
+                                        selectedLocation = value;
+                                      });
+                                    }
+                                  });
+                                } else {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text("Location not found")),
+                                  );
+                                }
+                              } catch (e) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text("Error finding location: ${e.toString()}")),
+                                );
+                              }
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text("Please enter a location")),
+                              );
+                            }
+                          },
+                        ),
+                      IconButton(
+                        icon: Icon(Icons.map, color: Colors.red[800]),
+                        onPressed: _isLoadingLocation ? null : _openMap,
+                      ),
+                    ],
                   ),
                 ),
                 onChanged: (value) {
-                  // Trigger OSM location suggestions when user types
                   _getLocationSuggestions(value);
                 },
               ),
@@ -323,11 +479,23 @@ class _SignUpPage2State extends State<SignUpPage2> {
                     itemCount: _locationSuggestions.length,
                     itemBuilder: (context, index) {
                       return InkWell(
-                        onTap: () {
-                          setState(() {
-                            locationController.text = _locationSuggestions[index]['display_name']!;
-                            _locationSuggestions = []; // Clear suggestions after selection
-                          });
+                        onTap: () async {
+                          try {
+                            List<Location> locations = await locationFromAddress(_locationSuggestions[index]['display_name']!);
+                            if (locations.isNotEmpty) {
+                              LatLng location = LatLng(
+                                locations.first.latitude,
+                                locations.first.longitude,
+                              );
+                              setState(() {
+                                locationController.text = _locationSuggestions[index]['display_name']!;
+                                selectedLocation = location;
+                                _locationSuggestions = [];
+                              });
+                            }
+                          } catch (e) {
+                            print("Error getting coordinates: $e");
+                          }
                         },
                         child: Container(
                           padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),

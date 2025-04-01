@@ -234,7 +234,7 @@ class _RequestPageState extends State<RequestPage> {
                     setState(() => selectedGender = value);
                   }),
                   _textField("Hospital name", hospitalController),
-                   Text("Location", style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+                  Text("Location", style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
                     Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(4),
@@ -246,8 +246,7 @@ class _RequestPageState extends State<RequestPage> {
                 controller: locationController,
                 decoration: InputDecoration(
                   filled: true,
-                  fillColor: Color.fromARGB(255, 255, 255, 255), // Light yellow background color
-                  // hintText: "Enter location",
+                  fillColor: Color.fromARGB(255, 255, 255, 255),
                   contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.only(
@@ -256,28 +255,73 @@ class _RequestPageState extends State<RequestPage> {
                       bottomLeft: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
                       bottomRight: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
                     ),
-                    // borderSide: BorderSide(color: const Color.fromARGB(255, 0, 0, 0)),
                   ),
                   enabledBorder: OutlineInputBorder(
-                  
                     borderRadius: BorderRadius.only(
                       topLeft: Radius.circular(4),
                       topRight: Radius.circular(4),
                       bottomLeft: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
                       bottomRight: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
                     ),
-                    // borderSide: BorderSide(color: const Color.fromARGB(255, 0, 0, 0)),
                   ),
-                  suffixIcon: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child:  IconButton(
-                      icon: Icon(Icons.map, color: Colors.red[800]),
-                      onPressed: _openMap,
-                    ),
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.search, color: Colors.red[800]),
+                        onPressed: () async {
+                          if (locationController.text.isNotEmpty) {
+                            try {
+                              List<Location> locations = await locationFromAddress(locationController.text);
+                              if (locations.isNotEmpty) {
+                                LatLng location = LatLng(
+                                  locations.first.latitude,
+                                  locations.first.longitude,
+                                );
+                                setState(() {
+                                  _currentLocation = location;
+                                });
+                                // Open map with the searched location
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => MapPage(
+                                      initialLocation: location,
+                                      onLocationSelected: (LatLng selectedLocation) async {
+                                        String address = await _getAddressFromCoordinates(selectedLocation);
+                                        setState(() {
+                                          _currentLocation = selectedLocation;
+                                          locationController.text = address;
+                                        });
+                                      },
+                                    ),
+                                  ),
+                                );
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text("Location not found")),
+                                );
+                              }
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text("Error finding location: ${e.toString()}")),
+                              );
+                            }
+                          } else {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text("Please enter a location")),
+                            );
+                          }
+                        },
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.map, color: Colors.red[800]),
+                        onPressed: _openMap,
+                      ),
+                    ],
                   ),
                 ),
                 onChanged: (value) {
-                  // Trigger OSM location suggestions when user types
                   _getLocationSuggestions(value);
                 },
               ),
@@ -308,11 +352,23 @@ class _RequestPageState extends State<RequestPage> {
                     itemCount: _locationSuggestions.length,
                     itemBuilder: (context, index) {
                       return InkWell(
-                        onTap: () {
-                          setState(() {
-                            locationController.text = _locationSuggestions[index]['display_name']!;
-                            _locationSuggestions = []; // Clear suggestions after selection
-                          });
+                        onTap: () async {
+                          try {
+                            List<Location> locations = await locationFromAddress(_locationSuggestions[index]['display_name']!);
+                            if (locations.isNotEmpty) {
+                              LatLng location = LatLng(
+                                locations.first.latitude,
+                                locations.first.longitude,
+                              );
+                              setState(() {
+                                locationController.text = _locationSuggestions[index]['display_name']!;
+                                _currentLocation = location;
+                                _locationSuggestions = [];
+                              });
+                            }
+                          } catch (e) {
+                            print("Error getting coordinates: $e");
+                          }
                         },
                         child: Container(
                           padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),

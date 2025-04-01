@@ -117,8 +117,8 @@ class _FindDonorsPageState extends State<FindDonorsPage> {
         });
       }
     } else {
-      // Fetch user location from Firestore if no initial location provided
-      _fetchUserLocation();
+      // Get current location if no initial location provided
+      _getCurrentLocation();
     }
     
     // Auto search if requested
@@ -127,6 +127,50 @@ class _FindDonorsPageState extends State<FindDonorsPage> {
       Future.delayed(const Duration(milliseconds: 500), () {
         _searchDonors();
       });
+    }
+  }
+
+  Future<void> _getCurrentLocation() async {
+    try {
+      // Check location permission
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Location permission denied")),
+          );
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Location permission permanently denied")),
+        );
+        return;
+      }
+
+      // Get current position
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      // Convert position to LatLng
+      LatLng location = LatLng(position.latitude, position.longitude);
+
+      // Get address from coordinates
+      String address = await _getAddressFromCoordinates(location);
+
+      setState(() {
+        _currentLocation = location;
+        locationController.text = address;
+      });
+    } catch (e) {
+      print("Error getting location: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error getting location: ${e.toString()}")),
+      );
     }
   }
 
@@ -363,12 +407,11 @@ Future<void> _fetchUserLocation() async {
           ),
           child: Column(
             children: [
-              // Text field for location input
               TextField(
                 controller: locationController,
                 decoration: InputDecoration(
                   filled: true,
-                  fillColor: Color.fromARGB(255, 255, 255, 255), // Light yellow background color
+                  fillColor: Color.fromARGB(255, 255, 255, 255),
                   hintText: "Enter location",
                   contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
                   border: OutlineInputBorder(
@@ -389,16 +432,64 @@ Future<void> _fetchUserLocation() async {
                     ),
                     borderSide: BorderSide(color: Colors.grey.shade300),
                   ),
-                  suffixIcon: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child:   IconButton(
-                      icon: Icon(Icons.map, color: Colors.red[800]),
-                      onPressed: _openMap,
-                    ),
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.search, color: Colors.red[800]),
+                        onPressed: () async {
+                          if (locationController.text.isNotEmpty) {
+                            try {
+                              List<Location> locations = await locationFromAddress(locationController.text);
+                              if (locations.isNotEmpty) {
+                                LatLng location = LatLng(
+                                  locations.first.latitude,
+                                  locations.first.longitude,
+                                );
+                                setState(() {
+                                  _currentLocation = location;
+                                });
+                                // Open map with the searched location
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => MapPage(
+                                      initialLocation: location,
+                                      onLocationSelected: (LatLng selectedLocation) async {
+                                        String address = await _getAddressFromCoordinates(selectedLocation);
+                                        setState(() {
+                                          _currentLocation = selectedLocation;
+                                          locationController.text = address;
+                                        });
+                                      },
+                                    ),
+                                  ),
+                                );
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text("Location not found")),
+                                );
+                              }
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text("Error finding location: ${e.toString()}")),
+                              );
+                            }
+                          } else {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text("Please enter a location")),
+                            );
+                          }
+                        },
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.map, color: Colors.red[800]),
+                        onPressed: _openMap,
+                      ),
+                    ],
                   ),
                 ),
                 onChanged: (value) {
-                  // Trigger OSM location suggestions when user types
                   _getLocationSuggestions(value);
                 },
               ),
@@ -429,11 +520,23 @@ Future<void> _fetchUserLocation() async {
                     itemCount: _locationSuggestions.length,
                     itemBuilder: (context, index) {
                       return InkWell(
-                        onTap: () {
-                          setState(() {
-                            locationController.text = _locationSuggestions[index]['display_name']!;
-                            _locationSuggestions = []; // Clear suggestions after selection
-                          });
+                        onTap: () async {
+                          try {
+                            List<Location> locations = await locationFromAddress(_locationSuggestions[index]['display_name']!);
+                            if (locations.isNotEmpty) {
+                              LatLng location = LatLng(
+                                locations.first.latitude,
+                                locations.first.longitude,
+                              );
+                              setState(() {
+                                locationController.text = _locationSuggestions[index]['display_name']!;
+                                _currentLocation = location;
+                                _locationSuggestions = [];
+                              });
+                            }
+                          } catch (e) {
+                            print("Error getting coordinates: $e");
+                          }
                         },
                         child: Container(
                           padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
@@ -498,6 +601,8 @@ class _MapPageState extends State<MapPage> {
   LatLng _selectedLocation = LatLng(20.5937, 78.9629);
   final TextEditingController _searchController = TextEditingController();
   bool _isSearching = false;
+  List<Map<String, dynamic>> _locationSuggestions = [];
+  Timer? _debounce;
 
   @override
   void initState() {
@@ -508,7 +613,58 @@ class _MapPageState extends State<MapPage> {
   @override
   void dispose() {
     _searchController.dispose();
+    _debounce?.cancel();
     super.dispose();
+  }
+
+  // Fetch suggestions from OSM Nominatim
+  Future<void> _getLocationSuggestions(String query) async {
+    // Clear previous timer if it exists
+    if (_debounce?.isActive ?? false) _debounce?.cancel();
+    
+    // Debounce to prevent too many API calls while typing
+    _debounce = Timer(Duration(milliseconds: 500), () async {
+      if (query.length < 3) {
+        setState(() {
+          _locationSuggestions = [];
+        });
+        return;
+      }
+      
+      try {
+        final response = await http.get(
+          Uri.parse(
+            'https://nominatim.openstreetmap.org/search?q=$query&format=json&addressdetails=1&limit=5'
+          ),
+          headers: {
+            'User-Agent': 'YourAppName', // Required by OSM policy
+            'Accept': 'application/json',
+          },
+        );
+        
+        if (response.statusCode == 200) {
+          final List<dynamic> data = json.decode(response.body);
+          
+          setState(() {
+            _locationSuggestions = data.map((item) {
+              return {
+                'display_name': item['display_name'],
+                'place_id': item['place_id'].toString(),
+              };
+            }).toList();
+          });
+        } else {
+          setState(() {
+            _locationSuggestions = [];
+          });
+        }
+      } catch (e) {
+        print('Error fetching location suggestions: $e');
+        setState(() {
+          _locationSuggestions = [];
+        });
+      }
+    });
   }
 
   Future<void> _searchLocation() async {
@@ -517,6 +673,7 @@ class _MapPageState extends State<MapPage> {
 
     setState(() {
       _isSearching = true;
+      _locationSuggestions = [];
     });
 
     try {
@@ -549,37 +706,106 @@ class _MapPageState extends State<MapPage> {
       ),
       body: Column(
         children: [
-          // Search bar
+          // Search bar with suggestions
           Container(
             padding: EdgeInsets.all(16),
             color: Colors.white,
-            child: Row(
+            child: Column(
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: "Search location",
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 16),
-                      suffixIcon: _isSearching 
-                        ? Padding(
-                            padding: EdgeInsets.all(8),
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.red[800],
-                            ),
-                          )
-                        : IconButton(
-                            icon: Icon(Icons.search),
-                            onPressed: _searchLocation,
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: "Search location",
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
                           ),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 16),
+                          suffixIcon: _isSearching 
+                            ? Padding(
+                                padding: EdgeInsets.all(8),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.red[800],
+                                ),
+                              )
+                            : IconButton(
+                                icon: Icon(Icons.search),
+                                onPressed: _searchLocation,
+                              ),
+                        ),
+                        onChanged: (value) {
+                          _getLocationSuggestions(value);
+                        },
+                        onSubmitted: (_) => _searchLocation(),
+                      ),
                     ),
-                    onSubmitted: (_) => _searchLocation(),
-                  ),
+                  ],
                 ),
+                // Location suggestions dropdown
+                if (_locationSuggestions.isNotEmpty)
+                  Container(
+                    margin: EdgeInsets.only(top: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.grey.withOpacity(0.2),
+                          spreadRadius: 1,
+                          blurRadius: 2,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                      border: Border.all(color: Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      physics: NeverScrollableScrollPhysics(),
+                      padding: EdgeInsets.zero,
+                      itemCount: _locationSuggestions.length,
+                      itemBuilder: (context, index) {
+                        return InkWell(
+                          onTap: () async {
+                            try {
+                              List<Location> locations = await locationFromAddress(_locationSuggestions[index]['display_name']!);
+                              if (locations.isNotEmpty) {
+                                setState(() {
+                                  _selectedLocation = LatLng(
+                                    locations.first.latitude,
+                                    locations.first.longitude,
+                                  );
+                                  _locationSuggestions = [];
+                                });
+                              }
+                            } catch (e) {
+                              print("Error getting coordinates: $e");
+                            }
+                          },
+                          child: Container(
+                            padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                            decoration: BoxDecoration(
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: index < _locationSuggestions.length - 1
+                                      ? Colors.grey.shade200
+                                      : Colors.transparent,
+                                  width: 1,
+                                ),
+                              ),
+                            ),
+                            child: Text(
+                              _locationSuggestions[index]['display_name']!,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
               ],
             ),
           ),
