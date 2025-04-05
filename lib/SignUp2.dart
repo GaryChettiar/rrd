@@ -7,12 +7,17 @@ import 'package:geocoding/geocoding.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
 
 class SignUpPage2 extends StatefulWidget {
+  final String selectedEntity;
+
+  const SignUpPage2({Key? key, required this.selectedEntity}) : super(key: key);
+
   @override
   _SignUpPage2State createState() => _SignUpPage2State();
 }
@@ -21,14 +26,18 @@ class _SignUpPage2State extends State<SignUpPage2> {
   final TextEditingController nameController = TextEditingController();
   final TextEditingController contactController = TextEditingController();
   final TextEditingController locationController = TextEditingController();
+  final TextEditingController licenseController = TextEditingController(); // For hospitals and blood banks
   String? selectedBloodType;
   LatLng? selectedLocation;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   User? user = FirebaseAuth.instance.currentUser;
+  bool _isValidPhone = false;
+  bool _isValidLicense = false;
 
   final FocusNode nameFocus = FocusNode();
   final FocusNode contactFocus = FocusNode();
   final FocusNode locationFocus = FocusNode();
+  final FocusNode licenseFocus = FocusNode();
 
   LatLng? _currentLocation;
   bool isSearchingLocation = false;
@@ -36,10 +45,61 @@ class _SignUpPage2State extends State<SignUpPage2> {
   Timer? _debounce;
   bool _isLoadingLocation = false;
 
+  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
+
+  // Add phone validation function
+  bool _validateIndianPhone(String phone) {
+    final RegExp phoneRegex = RegExp(r'^(?:\+91|91|0)?[6789]\d{9}$');
+    return phoneRegex.hasMatch(phone);
+  }
+
+  void _validatePhone(String phone) {
+    setState(() {
+      _isValidPhone = _validateIndianPhone(phone);
+    });
+  }
+
+  // Add license number validation function
+  bool _validateLicenseNumber(String license) {
+    if (widget.selectedEntity == 'bloodbank') {
+      // Blood bank license format: XX-YY-BB-ZZZZZ (e.g., AB-12-BB-12345)
+      final RegExp licenseRegex = RegExp(r'^[A-Z]{2}-\d{2}-BB-\d{5}$');
+      return licenseRegex.hasMatch(license);
+    } else if (widget.selectedEntity == 'hospital') {
+      // Hospital license format: XX/YYYY/ZZZZZ (e.g., AB/1234/56789)
+      final RegExp licenseRegex = RegExp(r'^[A-Z]{2}/\d{4}/\d{5}$');
+      return licenseRegex.hasMatch(license);
+    }
+    return true; // For user entity, no validation needed
+  }
+
+  void _validateLicense(String license) {
+    if (widget.selectedEntity != 'user') {
+      setState(() {
+        _isValidLicense = _validateLicenseNumber(license);
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _getCurrentLocation();
+    // Add listener for phone validation
+    contactController.addListener(() {
+      _validatePhone(contactController.text);
+    });
+    // Add listener for license validation
+    licenseController.addListener(() {
+      _validateLicense(licenseController.text);
+    });
+  }
+
+  @override
+  void dispose() {
+    contactController.dispose();
+    licenseController.dispose();
+    super.dispose();
   }
 
   Future<void> _getCurrentLocation() async {
@@ -114,6 +174,18 @@ class _SignUpPage2State extends State<SignUpPage2> {
           _isLoadingLocation = false;
         });
       }
+
+      if (mounted) {  // Check if widget is still mounted
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Unable to get your current location. Please check your location settings and try again."),
+            backgroundColor: Colors.red[700],
+          ),
+        );
+        setState(() {
+          _isLoadingLocation = false;
+        });
+      }
     }
   }
 
@@ -171,38 +243,88 @@ class _SignUpPage2State extends State<SignUpPage2> {
     if (nameController.text.isEmpty ||
         contactController.text.isEmpty ||
         locationController.text.isEmpty ||
-        selectedBloodType == null ||
-        selectedLocation == null) {
+        selectedLocation == null ||
+        (widget.selectedEntity != 'user' && licenseController.text.isEmpty)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Please fill all the fields and select a location")),
+        SnackBar(content: Text("Please fill all the required fields")),
+      );
+      return;
+    }
+
+    if (!_isValidPhone) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Please enter a valid Indian phone number")),
+      );
+      return;
+    }
+
+    // Validate license number for hospitals and blood banks
+    if (widget.selectedEntity != 'user' && !_isValidLicense) {
+      String entityType = widget.selectedEntity == 'bloodbank' ? 'blood bank' : 'hospital';
+      String format = widget.selectedEntity == 'bloodbank' ? 'XX-YY-BB-ZZZZZ (e.g., AB-12-BB-12345)' : 'XX/YYYY/ZZZZZ (e.g., AB/1234/56789)';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Please enter a valid $entityType license number in format: $format")),
       );
       return;
     }
 
     try {
       if (user != null) {
-        // Format coordinates as "latitude,longitude" string
         String coordinates = "${selectedLocation!.latitude},${selectedLocation!.longitude}";
         
-        await _firestore.collection('users').doc(user!.uid).set({
+        Map<String, dynamic> userData = {
           'uid': user!.uid,
           'name': nameController.text.trim(),
-          'bloodType': selectedBloodType,
           'contact': contactController.text.trim(),
-         'location': coordinates, // Store as string instead of GeoPoint
+          'location': coordinates,
           'createdAt': FieldValue.serverTimestamp(),
-          'isDonor': false,
-          'latestDonation': null,
-        });
+        };
+
+        // Add entity-specific fields
+        if (widget.selectedEntity == 'user') {
+          userData.addAll({
+            'bloodType': selectedBloodType,
+            'isDonor': false,
+            'latestDonation': null,
+          });
+        } else if (widget.selectedEntity == 'hospital') {
+          userData.addAll({
+            'license': licenseController.text.trim(),
+            'type': 'hospital',
+            'bloodInventory': {},
+          });
+        } else if (widget.selectedEntity == 'bloodbank') {
+          userData.addAll({
+            'license': licenseController.text.trim(),
+            'type': 'bloodbank',
+            'bloodInventory': {},
+            'operatingHours': {},
+          });
+        }
+
+        // Request FCM permission and get token
+        await _firebaseMessaging.requestPermission();
+        String? fcmToken = await _firebaseMessaging.getToken();
+
+        if (fcmToken != null) {
+          userData['fcmToken'] = fcmToken;
+        }
+
+        await _firestore.collection(widget.selectedEntity + 's').doc(user!.uid).set(userData);
       }
+      
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Account created successfully!")),
       );
 
       Navigator.push(context, MaterialPageRoute(builder: (context) => MainScreen()));
     } catch (e) {
+      print("Error during registration: $e");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error: ${e.toString()}")),
+        SnackBar(
+          content: Text("Registration failed. Please check your connection and try again."),
+          backgroundColor: Colors.red[700],
+        ),
       );
     }
   }
@@ -295,8 +417,8 @@ class _SignUpPage2State extends State<SignUpPage2> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 40),
-              const Text(
-                "Create An Account",
+              Text(
+                "Complete Your Profile",
                 style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.bold,
@@ -314,29 +436,52 @@ class _SignUpPage2State extends State<SignUpPage2> {
               ),
               const SizedBox(height: 16),
 
-              // Blood Type Dropdown
-              const Text("Blood Type", style: TextStyle(color: Colors.black54)),
-              DropdownButtonFormField<String>(
-                decoration: InputDecoration(
-                  border: OutlineInputBorder(),
-                  filled: true,
-                  fillColor: Colors.white,
+              // Blood Type Dropdown (only for users)
+              if (widget.selectedEntity == 'user') ...[
+                const Text("Blood Type", style: TextStyle(color: Colors.black54)),
+                DropdownButtonFormField<String>(
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(),
+                    filled: true,
+                    fillColor: Colors.white,
+                  ),
+                  hint: const Text("Choose your blood type"),
+                  value: selectedBloodType,
+                  items: ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"]
+                      .map((bloodType) => DropdownMenuItem(
+                            value: bloodType,
+                            child: Text(bloodType),
+                          ))
+                      .toList(),
+                  onChanged: (value) {
+                    setState(() {
+                      selectedBloodType = value;
+                    });
+                  },
                 ),
-                hint: const Text("Choose your blood type"),
-                value: selectedBloodType,
-                items: ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"]
-                    .map((bloodType) => DropdownMenuItem(
-                          value: bloodType,
-                          child: Text(bloodType),
-                        ))
-                    .toList(),
-                onChanged: (value) {
-                  setState(() {
-                    selectedBloodType = value;
-                  });
-                },
-              ),
-              const SizedBox(height: 16),
+                const SizedBox(height: 16),
+              ],
+
+              // License Number (for hospitals and blood banks)
+              if (widget.selectedEntity != 'user') ...[
+                Text("License Number", style: TextStyle(color: Colors.black54)),
+                TextField(
+                  controller: licenseController,
+                  focusNode: licenseFocus,
+                  decoration: InputDecoration(
+                    border: UnderlineInputBorder(),
+                    errorText: licenseController.text.isNotEmpty && !_isValidLicense
+                        ? widget.selectedEntity == 'bloodbank'
+                            ? 'Format: XX-YY-BB-ZZZZZ (e.g., AB-12-BB-12345)'
+                            : 'Format: XX/YYYY/ZZZZZ (e.g., AB/1234/56789)'
+                        : null,
+                    hintText: widget.selectedEntity == 'bloodbank'
+                        ? 'XX-YY-BB-ZZZZZ'
+                        : 'XX/YYYY/ZZZZZ',
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
 
               // Contact Number
               const Text("Contact No", style: TextStyle(color: Colors.black54)),
@@ -344,184 +489,195 @@ class _SignUpPage2State extends State<SignUpPage2> {
                 controller: contactController,
                 focusNode: contactFocus,
                 keyboardType: TextInputType.phone,
-                decoration: InputDecoration(border: UnderlineInputBorder()),
+                decoration: InputDecoration(
+                  border: UnderlineInputBorder(),
+                  errorText: contactController.text.isNotEmpty && !_isValidPhone
+                      ? 'Please enter a valid Indian phone number'
+                      : null,
+                ),
+                onChanged: (value) {
+                  _validatePhone(value);
+                },
               ),
               const SizedBox(height: 16),
 
               // Location
               const Text("Location", style: TextStyle(color: Colors.black54)),
-             Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Column(
-            children: [
-              // Text field for location input
-              TextField(
-                controller: locationController,
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: Color.fromARGB(255, 255, 255, 255),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.only(
-                      topLeft: Radius.circular(4),
-                      topRight: Radius.circular(4),
-                      bottomLeft: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
-                      bottomRight: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
-                    ),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.only(
-                      topLeft: Radius.circular(4),
-                      topRight: Radius.circular(4),
-                      bottomLeft: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
-                      bottomRight: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
-                    ),
-                  ),
-                  suffixIcon: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_isLoadingLocation)
-                        Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.red[800],
-                            ),
+              Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Column(
+                  children: [
+                    // Text field for location input
+                    TextField(
+                      controller: locationController,
+                      decoration: InputDecoration(
+                        filled: true,
+                        fillColor: Color.fromARGB(255, 255, 255, 255),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.only(
+                            topLeft: Radius.circular(4),
+                            topRight: Radius.circular(4),
+                            bottomLeft: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
+                            bottomRight: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
                           ),
-                        )
-                      else
-                        IconButton(
-                          icon: Icon(Icons.search, color: Colors.red[800]),
-                          onPressed: () async {
-                            if (locationController.text.isNotEmpty) {
-                              try {
-                                List<Location> locations = await locationFromAddress(locationController.text);
-                                if (locations.isNotEmpty) {
-                                  LatLng location = LatLng(
-                                    locations.first.latitude,
-                                    locations.first.longitude,
-                                  );
-                                  setState(() {
-                                    selectedLocation = location;
-                                  });
-                                  // Open map with the searched location
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => MapLocationPicker(
-                                        initialLocation: location,
-                                      ),
-                                    ),
-                                  ).then((value) {
-                                    if (value != null) {
-                                      setState(() {
-                                        selectedLocation = value;
-                                      });
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.only(
+                            topLeft: Radius.circular(4),
+                            topRight: Radius.circular(4),
+                            bottomLeft: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
+                            bottomRight: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
+                          ),
+                        ),
+                        suffixIcon: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_isLoadingLocation)
+                              Padding(
+                                padding: const EdgeInsets.all(8.0),
+                                child: SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.red[800],
+                                  ),
+                                ),
+                              )
+                            else
+                              IconButton(
+                                icon: Icon(Icons.search, color: Colors.red[800]),
+                                onPressed: () async {
+                                  if (locationController.text.isNotEmpty) {
+                                    try {
+                                      List<Location> locations = await locationFromAddress(locationController.text);
+                                      if (locations.isNotEmpty) {
+                                        LatLng location = LatLng(
+                                          locations.first.latitude,
+                                          locations.first.longitude,
+                                        );
+                                        setState(() {
+                                          selectedLocation = location;
+                                        });
+                                        // Open map with the searched location
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) => MapLocationPicker(
+                                              initialLocation: location,
+                                            ),
+                                          ),
+                                        ).then((value) {
+                                          if (value != null) {
+                                            setState(() {
+                                              selectedLocation = value;
+                                            });
+                                          }
+                                        });
+                                      } else {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(content: Text("Location not found")),
+                                        );
+                                      }
+                                    } catch (e) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text("Could not find the location. Please try a different address."),
+                                          backgroundColor: Colors.red[700],
+                                        ),
+                                      );
                                     }
-                                  });
-                                } else {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text("Location not found")),
-                                  );
+                                  } else {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text("Please enter a location")),
+                                    );
+                                  }
+                                },
+                              ),
+                            IconButton(
+                              icon: Icon(Icons.map, color: Colors.red[800]),
+                              onPressed: _isLoadingLocation ? null : _openMap,
+                            ),
+                          ],
+                        ),
+                      ),
+                      onChanged: (value) {
+                        _getLocationSuggestions(value);
+                      },
+                    ),
+                    
+                    // Location suggestions dropdown
+                    if (_locationSuggestions.isNotEmpty)
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color.fromARGB(255, 0, 0, 0).withOpacity(0.2),
+                              spreadRadius: 1,
+                              blurRadius: 2,
+                              offset: Offset(0, 1),
+                            ),
+                          ],
+                          border: Border.all(color: const Color.fromARGB(255, 0, 0, 0)),
+                          borderRadius: BorderRadius.only(
+                            bottomLeft: Radius.circular(4),
+                            bottomRight: Radius.circular(4),
+                          ),
+                        ),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          physics: NeverScrollableScrollPhysics(),
+                          padding: EdgeInsets.zero,
+                          itemCount: _locationSuggestions.length,
+                          itemBuilder: (context, index) {
+                            return InkWell(
+                              onTap: () async {
+                                try {
+                                  List<Location> locations = await locationFromAddress(_locationSuggestions[index]['display_name']!);
+                                  if (locations.isNotEmpty) {
+                                    LatLng location = LatLng(
+                                      locations.first.latitude,
+                                      locations.first.longitude,
+                                    );
+                                    setState(() {
+                                      locationController.text = _locationSuggestions[index]['display_name']!;
+                                      selectedLocation = location;
+                                      _locationSuggestions = [];
+                                    });
+                                  }
+                                } catch (e) {
+                                  print("Error getting coordinates: $e");
                                 }
-                              } catch (e) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text("Error finding location: ${e.toString()}")),
-                                );
-                              }
-                            } else {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text("Please enter a location")),
-                              );
-                            }
+                              },
+                              child: Container(
+                                padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                                decoration: BoxDecoration(
+                                  border: Border(
+                                    bottom: BorderSide(
+                                      color: index < _locationSuggestions.length - 1
+                                          ? const Color.fromARGB(255, 6, 6, 6)
+                                          : Colors.transparent,
+                                      width: 1,
+                                    ),
+                                  ),
+                                ),
+                                child: Text(
+                                  _locationSuggestions[index]['display_name']!,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            );
                           },
                         ),
-                      IconButton(
-                        icon: Icon(Icons.map, color: Colors.red[800]),
-                        onPressed: _isLoadingLocation ? null : _openMap,
                       ),
-                    ],
-                  ),
+                  ],
                 ),
-                onChanged: (value) {
-                  _getLocationSuggestions(value);
-                },
               ),
-              
-              // Location suggestions dropdown
-              if (_locationSuggestions.isNotEmpty)
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color.fromARGB(255, 0, 0, 0).withOpacity(0.2),
-                        spreadRadius: 1,
-                        blurRadius: 2,
-                        offset: Offset(0, 1),
-                      ),
-                    ],
-                    border: Border.all(color: const Color.fromARGB(255, 0, 0, 0)),
-                    borderRadius: BorderRadius.only(
-                      bottomLeft: Radius.circular(4),
-                      bottomRight: Radius.circular(4),
-                    ),
-                  ),
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    physics: NeverScrollableScrollPhysics(),
-                    padding: EdgeInsets.zero,
-                    itemCount: _locationSuggestions.length,
-                    itemBuilder: (context, index) {
-                      return InkWell(
-                        onTap: () async {
-                          try {
-                            List<Location> locations = await locationFromAddress(_locationSuggestions[index]['display_name']!);
-                            if (locations.isNotEmpty) {
-                              LatLng location = LatLng(
-                                locations.first.latitude,
-                                locations.first.longitude,
-                              );
-                              setState(() {
-                                locationController.text = _locationSuggestions[index]['display_name']!;
-                                selectedLocation = location;
-                                _locationSuggestions = [];
-                              });
-                            }
-                          } catch (e) {
-                            print("Error getting coordinates: $e");
-                          }
-                        },
-                        child: Container(
-                          padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                          decoration: BoxDecoration(
-                            border: Border(
-                              bottom: BorderSide(
-                                color: index < _locationSuggestions.length - 1
-                                    ? const Color.fromARGB(255, 6, 6, 6)
-                                    : Colors.transparent,
-                                width: 1,
-                              ),
-                            ),
-                          ),
-                          child: Text(
-                            _locationSuggestions[index]['display_name']!,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-            ],
-          ),
-        ),
               const SizedBox(height: 32),
 
               // Create Account Button
@@ -538,7 +694,7 @@ class _SignUpPage2State extends State<SignUpPage2> {
                       ),
                     ),
                     child: const Text(
-                      "Create Account",
+                      "Complete Registration",
                       style: TextStyle(fontSize: 16, color: Colors.white),
                     ),
                   ),
@@ -550,7 +706,6 @@ class _SignUpPage2State extends State<SignUpPage2> {
         ),
       ),
     );
-    
   }
 }
 

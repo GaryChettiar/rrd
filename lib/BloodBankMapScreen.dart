@@ -3,16 +3,20 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 class BloodBankMapScreen extends StatefulWidget {
   final Position position;
   final List<Map<String, dynamic>> bloodBanks;
+  final bool isLoading;
 
-  BloodBankMapScreen({
-    required this.position, 
-    this.bloodBanks = const [], // Default to empty list if not provided
+  const BloodBankMapScreen({
+    required this.position,
+    required this.bloodBanks,
+    this.isLoading = false,
   });
-
+  
   @override
   _BloodBankMapScreenState createState() => _BloodBankMapScreenState();
 }
@@ -20,17 +24,91 @@ class BloodBankMapScreen extends StatefulWidget {
 class _BloodBankMapScreenState extends State<BloodBankMapScreen> {
   late final MapController _mapController;
   double _currentZoom = 14.0;
+  bool isLoading = false;
   late List<Map<String, dynamic>> bloodBanks;
 
   @override
   void initState() {
     super.initState();
     _mapController = MapController();
-    bloodBanks = widget.bloodBanks; // Initialize with the passed-in data
+    isLoading = widget.isLoading;
+    bloodBanks = [...widget.bloodBanks]; // Create a copy to avoid reference issues
+    
+    // If initially loading, fetch data
+    if (isLoading && bloodBanks.isEmpty) {
+      _fetchBloodBanks();
+    }
     
     print("🔄 Initializing map with ${bloodBanks.length} blood banks");
     for (var bank in bloodBanks) {
       print("✅ Blood Bank: ${bank["name"]}, Lat: ${bank["lat"]}, Lon: ${bank["lon"]}");
+    }
+  }
+
+  @override
+  void dispose() {
+    // Clean up resources when widget is disposed
+    super.dispose();
+  }
+
+  Future<void> _fetchBloodBanks() async {
+    if (!mounted) return;
+    
+    try {
+      // Use the user's current position for the search query
+      double lat = widget.position.latitude;
+      double lon = widget.position.longitude;
+      
+      // Create a bounding box around the user's location
+      final response = await http.get(
+        Uri.parse(
+          'https://nominatim.openstreetmap.org/search?format=json&q=blood+bank&bounded=1&viewbox=${lon - 0.05},${lat + 0.05},${lon + 0.05},${lat - 0.05}&limit=5'),
+        headers: {
+          'User-Agent': 'YourAppName/1.0 (garychettiar@gmail.com)',
+        },
+      ).timeout(Duration(seconds: 5));
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final List<Map<String, dynamic>> fetchedBanks = data.map<Map<String, dynamic>>((item) {
+          return {
+            "name": item["display_name"],
+            "lat": double.parse(item["lat"]),
+            "lon": double.parse(item["lon"]),
+            "address": item["display_name"],
+            "display_name": item["display_name"],
+          };
+        }).toList();
+        
+        if (mounted) {
+          setState(() {
+            bloodBanks = fetchedBanks;
+            isLoading = false;
+          });
+          
+          // Center the map on user's location after loading data
+          _mapController.move(LatLng(lat, lon), _currentZoom);
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            isLoading = false;
+          });
+        }
+      }
+    } catch (e) {
+      print("Error fetching blood banks: $e");
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+        // Show error only if still mounted
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Could not load blood banks. Please try again later.")),
+        );
+      }
     }
   }
 
@@ -75,12 +153,16 @@ class _BloodBankMapScreenState extends State<BloodBankMapScreen> {
     print("📌 Rebuilding UI with ${bloodBanks.length} blood banks");
 
     return Scaffold(
-      appBar: AppBar(title: Text("Nearby Blood Banks")),
+      appBar: AppBar(
+        title: Text("Blood Banks"),
+        backgroundColor: Color(0xFFA22322),
+        foregroundColor: Colors.white,
+      ),
       body: Column(
         children: [
-          // 🔹 Map with fixed height
+          // Map with fixed height
           SizedBox(
-            height: 300, // Adjust map height as needed
+            height: 300,
             child: Stack(
               children: [
                 FlutterMap(
@@ -88,6 +170,13 @@ class _BloodBankMapScreenState extends State<BloodBankMapScreen> {
                   options: MapOptions(
                     center: LatLng(widget.position.latitude, widget.position.longitude),
                     zoom: _currentZoom,
+                    onMapReady: () {
+                      // Ensure the map centers on user's location when ready
+                      _mapController.move(
+                        LatLng(widget.position.latitude, widget.position.longitude),
+                        _currentZoom
+                      );
+                    },
                   ),
                   children: [
                     TileLayer(
@@ -114,7 +203,7 @@ class _BloodBankMapScreenState extends State<BloodBankMapScreen> {
                     ),
                   ],
                 ),
-                // 🔹 Zoom Buttons
+                // Zoom Buttons
                 Positioned(
                   bottom: 10,
                   right: 10,
@@ -140,26 +229,42 @@ class _BloodBankMapScreenState extends State<BloodBankMapScreen> {
             ),
           ),
 
-          // 🔹 Debug UI Showing Total Blood Banks
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Text("Total Blood Banks: ${bloodBanks.length}", 
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          ),
-
-          // 🔹 List of Blood Banks Below
+          // List of Blood Banks Below
           Expanded(
-            child: bloodBanks.isNotEmpty
+            child: isLoading 
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(color: Color(0xFFA22322)),
+                      SizedBox(height: 12),
+                      Text("Finding nearby blood banks...", 
+                           style: TextStyle(fontWeight: FontWeight.w500)),
+                    ],
+                  ))
+              : bloodBanks.isNotEmpty
                 ? ListView.builder(
                     itemCount: bloodBanks.length,
                     itemBuilder: (context, index) {
                       final bank = bloodBanks[index];
                       return Card(
+                        elevation: 2,
                         margin: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                         child: ListTile(
-                          leading: Icon(Icons.bloodtype, color: Colors.red),
-                          title: Text(bank["name"] ?? "Unknown Blood Bank"),
-                          subtitle: Text(bank["display_name"] ?? "Location not available"),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          leading: Icon(Icons.bloodtype, color: Color(0xFFA22322), size: 28),
+                          title: Text(
+                            bank["name"] ?? "Unknown Blood Bank",
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Text(
+                            bank["display_name"] ?? "Location not available",
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                           trailing: ElevatedButton.icon(
                             icon: Icon(Icons.directions),
                             label: Text("Directions"),
@@ -169,15 +274,37 @@ class _BloodBankMapScreenState extends State<BloodBankMapScreen> {
                               bank["name"] ?? "Blood Bank",
                             ),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.blue,
+                              backgroundColor: Color(0xFFA22322),
                               foregroundColor: Colors.white,
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(6),
+                              ),
                             ),
                           ),
                         ),
                       );
                     },
                   )
-                : Center(child: Text("No blood banks found nearby.")),
+                : Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.location_off, size: 48, color: Colors.grey),
+                        SizedBox(height: 16),
+                        Text(
+                          "No blood banks found nearby",
+                          style: TextStyle(fontSize: 16, color: Colors.grey[700]),
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          "Try changing your location or expanding search radius",
+                          style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
           ),
         ],
       ),

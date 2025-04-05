@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class Donor {
   final String name;
@@ -83,6 +84,29 @@ class _DonorListState extends State<DonorList> {
     setState(() {}); // Refresh UI after fetching addresses
   }
 
+  // Function to initiate a phone call
+  void _callDonor(String phoneNumber) async {
+    final String phoneUrl = 'tel:+91$phoneNumber';
+    print('Attempting to launch: $phoneUrl'); // Debugging log
+    
+    try {
+      launchUrl(Uri.parse(phoneUrl), mode: LaunchMode.externalApplication);
+      if (await canLaunchUrl(Uri.parse(phoneUrl))) {
+        await launchUrl(Uri.parse(phoneUrl), mode: LaunchMode.externalApplication);
+      } else {
+        throw 'Could not launch $phoneUrl';
+      }
+    } catch (e) {
+      print('Error launching phone call: $e'); // Additional debug log
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: $e'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -150,9 +174,7 @@ class _DonorListState extends State<DonorList> {
                     ),
                     trailing: IconButton(
                       icon: Icon(Icons.call, color: Colors.green),
-                      onPressed: () {
-                        // Implement call functionality
-                      },
+                      onPressed: () => _callDonor(donor.phone),
                     ),
                   ),
                 );

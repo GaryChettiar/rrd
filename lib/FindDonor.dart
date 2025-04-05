@@ -146,7 +146,10 @@ class _FindDonorsPageState extends State<FindDonorsPage> {
 
       if (permission == LocationPermission.deniedForever) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Location permission permanently denied")),
+          SnackBar(
+            content: Text("Location permission permanently denied"),
+            backgroundColor: Colors.red[700],
+          ),
         );
         return;
       }
@@ -169,7 +172,10 @@ class _FindDonorsPageState extends State<FindDonorsPage> {
     } catch (e) {
       print("Error getting location: $e");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error getting location: ${e.toString()}")),
+        SnackBar(
+          content: Text("Unable to get your location. Please check your location settings and try again."),
+          backgroundColor: Colors.red[700],
+        ),
       );
     }
   }
@@ -314,21 +320,35 @@ Future<void> _fetchUserLocation() async {
           donorLon,
         ) / 1000; // Convert meters to KM
 
-        nearbyDonors.add(Donor(
-          name: doc['name'],
-          bloodType: doc['bloodType'],
-          location: doc['location'],
-          phone: doc['contact'],
-          distance: distance,
-          latestDonation: latestDonation,
-        ));
+        // Only add donors within 3 km radius
+        if (distance <= 3.0) {
+          nearbyDonors.add(Donor(
+            name: doc['name'],
+            bloodType: doc['bloodType'],
+            location: doc['location'],
+            phone: doc['contact'],
+            distance: distance,
+            latestDonation: latestDonation,
+          ));
+        }
       }
     }
 
-    print("Nearby Eligible Donors: ${nearbyDonors.length}");
+    print("Nearby Eligible Donors within 3km: ${nearbyDonors.length}");
     
     // Sort donors by distance
     nearbyDonors.sort((a, b) => a.distance.compareTo(b.distance));
+    
+    if (nearbyDonors.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("No eligible donors found within 3 km radius"),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     
     Navigator.push(
       context,
@@ -339,7 +359,7 @@ Future<void> _fetchUserLocation() async {
      
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text("Found ${nearbyDonors.length} eligible donors nearby!"),
+        content: Text("Found ${nearbyDonors.length} eligible donors within 3 km!"),
         duration: Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
       ),
@@ -467,12 +487,17 @@ Future<void> _fetchUserLocation() async {
                                 );
                               } else {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text("Location not found")),
+                                  SnackBar(
+                                    content: Text("Could not find the location. Please enter a different address."),
+                                    backgroundColor: Colors.red[700],
+                                  ),
                                 );
                               }
                             } catch (e) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text("Error finding location: ${e.toString()}")),
+                                SnackBar(
+                                  content: Text("Error finding location: ${e.toString()}"),
+                                ),
                               );
                             }
                           } else {
@@ -688,7 +713,10 @@ class _MapPageState extends State<MapPage> {
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Could not find location")),
+        SnackBar(
+          content: Text("Could not find the location. Please enter a different address."),
+          backgroundColor: Colors.red[700],
+        ),
       );
     } finally {
       setState(() {

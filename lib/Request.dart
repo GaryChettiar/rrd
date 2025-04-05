@@ -9,6 +9,8 @@ import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
+import 'package:cloud_functions/cloud_functions.dart';
+
 class RequestPage extends StatefulWidget {
   final VoidCallback? onRequestSubmitted;
 
@@ -26,22 +28,31 @@ class _RequestPageState extends State<RequestPage> {
   final TextEditingController locationController = TextEditingController();
   final TextEditingController phoneController = TextEditingController();
 
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
   String? selectedBloodGroup;
   String? selectedGender;
   String? selectedTime;
   LatLng? _currentLocation;
   final List<String> bloodGroups = [
-    "A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"
+    "A+",
+    "A-",
+    "B+",
+    "B-",
+    "O+",
+    "O-",
+    "AB+",
+    "AB-"
   ];
   final List<String> genders = ["Male", "Female", "Other"];
-   List<Map<String, dynamic>> _locationSuggestions = [];
+  List<Map<String, dynamic>> _locationSuggestions = [];
   Timer? _debounce;
 
   // Fetch suggestions from OSM Nominatim
   Future<void> _getLocationSuggestions(String query) async {
     // Clear previous timer if it exists
     if (_debounce?.isActive ?? false) _debounce?.cancel();
-    
+
     // Debounce to prevent too many API calls while typing
     _debounce = Timer(Duration(milliseconds: 500), () async {
       if (query.length < 3) {
@@ -50,21 +61,20 @@ class _RequestPageState extends State<RequestPage> {
         });
         return;
       }
-      
+
       try {
         final response = await http.get(
           Uri.parse(
-            'https://nominatim.openstreetmap.org/search?q=$query&format=json&addressdetails=1&limit=5'
-          ),
+              'https://nominatim.openstreetmap.org/search?q=$query&format=json&addressdetails=1&limit=5'),
           headers: {
             'User-Agent': 'YourAppName', // Required by OSM policy
             'Accept': 'application/json',
           },
         );
-        
+
         if (response.statusCode == 200) {
           final List<dynamic> data = json.decode(response.body);
-          
+
           setState(() {
             _locationSuggestions = data.map((item) {
               return {
@@ -89,15 +99,17 @@ class _RequestPageState extends State<RequestPage> {
 
   Future<String> _getAddressFromCoordinates(LatLng latLng) async {
     try {
-      List<Placemark> placemarks = await placemarkFromCoordinates(
-        latLng.latitude, latLng.longitude
-      );
+      List<Placemark> placemarks =
+          await placemarkFromCoordinates(latLng.latitude, latLng.longitude);
 
       if (placemarks.isNotEmpty) {
         Placemark place = placemarks.first;
-        String address = "${place.street}, ${place.subLocality}, ${place.locality}, "
-          "${place.administrativeArea}, ${place.postalCode}";
-        return address.isNotEmpty ? address : "${latLng.latitude}, ${latLng.longitude}";
+        String address =
+            "${place.street}, ${place.subLocality}, ${place.locality}, "
+            "${place.administrativeArea}, ${place.postalCode}";
+        return address.isNotEmpty
+            ? address
+            : "${latLng.latitude}, ${latLng.longitude}";
       }
     } catch (e) {
       print("Error in reverse geocoding: $e");
@@ -153,7 +165,8 @@ class _RequestPageState extends State<RequestPage> {
   }
 
   Future<void> submitRequest() async {
-    String uid = FirebaseAuth.instance.currentUser!.uid;
+    User? user = _auth.currentUser;
+    String uid = user!.uid;
 
     if (nameController.text.isEmpty ||
         selectedBloodGroup == null ||
@@ -171,7 +184,11 @@ class _RequestPageState extends State<RequestPage> {
     }
 
     try {
-      await FirebaseFirestore.instance.collection("users").doc(uid).collection("requests").add({
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-south1')
+          .httpsCallable('request');
+      // functions.useFunctionsEmulator("127.0.0.1", 5001);
+      // final callable = functions.httpsCallable('request');
+      final requestData = {
         "name": nameController.text,
         "bloodGroup": selectedBloodGroup,
         "units": int.parse(unitsController.text),
@@ -181,13 +198,17 @@ class _RequestPageState extends State<RequestPage> {
         "hospital": hospitalController.text,
         "location": locationController.text,
         "phone": phoneController.text,
-        "timestamp": FieldValue.serverTimestamp(),
-      });
+        "userId": user.uid,
+      };
+
+      print("Request Data: $requestData");
+
+      await callable.call(requestData);
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Request submitted successfully")),
       );
-      
+
       // Reset form fields
       nameController.clear();
       selectedBloodGroup = null;
@@ -198,14 +219,18 @@ class _RequestPageState extends State<RequestPage> {
       hospitalController.clear();
       locationController.clear();
       phoneController.clear();
-      
+
       // Call the callback to navigate to home page
       if (widget.onRequestSubmitted != null) {
         widget.onRequestSubmitted!();
       }
     } catch (e) {
+      print(e);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error submitting request: ${e.toString()}")),
+        SnackBar(
+          content: Text("Please check your connection and try again $e"),
+          backgroundColor: const Color.fromARGB(255, 224, 74, 74),
+        ),
       );
     }
   }
@@ -227,174 +252,213 @@ class _RequestPageState extends State<RequestPage> {
                   _dropdownField("Blood group", bloodGroups, (value) {
                     setState(() => selectedBloodGroup = value);
                   }),
-                  _textField("Number of Units", unitsController, isNumeric: true),
+                  _textField("Number of Units", unitsController,
+                      isNumeric: true),
                   _datePickerField("Date", dateController, pickDate),
                   _timePickerField("Time", pickTime),
                   _dropdownField("Gender", genders, (value) {
                     setState(() => selectedGender = value);
                   }),
                   _textField("Hospital name", hospitalController),
-                  Text("Location", style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
-                    Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Column(
-            children: [
-              // Text field for location input
-              TextField(
-                controller: locationController,
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: Color.fromARGB(255, 255, 255, 255),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.only(
-                      topLeft: Radius.circular(4),
-                      topRight: Radius.circular(4),
-                      bottomLeft: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
-                      bottomRight: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
+                  Text("Location",
+                      style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+                  Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(4),
                     ),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.only(
-                      topLeft: Radius.circular(4),
-                      topRight: Radius.circular(4),
-                      bottomLeft: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
-                      bottomRight: Radius.circular(_locationSuggestions.isEmpty ? 4 : 0),
-                    ),
-                  ),
-                  suffixIcon: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: Icon(Icons.search, color: Colors.red[800]),
-                        onPressed: () async {
-                          if (locationController.text.isNotEmpty) {
-                            try {
-                              List<Location> locations = await locationFromAddress(locationController.text);
-                              if (locations.isNotEmpty) {
-                                LatLng location = LatLng(
-                                  locations.first.latitude,
-                                  locations.first.longitude,
-                                );
-                                setState(() {
-                                  _currentLocation = location;
-                                });
-                                // Open map with the searched location
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => MapPage(
-                                      initialLocation: location,
-                                      onLocationSelected: (LatLng selectedLocation) async {
-                                        String address = await _getAddressFromCoordinates(selectedLocation);
+                    child: Column(
+                      children: [
+                        // Text field for location input
+                        TextField(
+                          controller: locationController,
+                          decoration: InputDecoration(
+                            filled: true,
+                            fillColor: Color.fromARGB(255, 255, 255, 255),
+                            contentPadding: EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 16),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.only(
+                                topLeft: Radius.circular(4),
+                                topRight: Radius.circular(4),
+                                bottomLeft: Radius.circular(
+                                    _locationSuggestions.isEmpty ? 4 : 0),
+                                bottomRight: Radius.circular(
+                                    _locationSuggestions.isEmpty ? 4 : 0),
+                              ),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.only(
+                                topLeft: Radius.circular(4),
+                                topRight: Radius.circular(4),
+                                bottomLeft: Radius.circular(
+                                    _locationSuggestions.isEmpty ? 4 : 0),
+                                bottomRight: Radius.circular(
+                                    _locationSuggestions.isEmpty ? 4 : 0),
+                              ),
+                            ),
+                            suffixIcon: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: Icon(Icons.search,
+                                      color: Colors.red[800]),
+                                  onPressed: () async {
+                                    if (locationController.text.isNotEmpty) {
+                                      try {
+                                        List<Location> locations =
+                                            await locationFromAddress(
+                                                locationController.text);
+                                        if (locations.isNotEmpty) {
+                                          LatLng location = LatLng(
+                                            locations.first.latitude,
+                                            locations.first.longitude,
+                                          );
+                                          setState(() {
+                                            _currentLocation = location;
+                                          });
+                                          // Open map with the searched location
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (context) => MapPage(
+                                                initialLocation: location,
+                                                onLocationSelected: (LatLng
+                                                    selectedLocation) async {
+                                                  String address =
+                                                      await _getAddressFromCoordinates(
+                                                          selectedLocation);
+                                                  setState(() {
+                                                    _currentLocation =
+                                                        selectedLocation;
+                                                    locationController.text =
+                                                        address;
+                                                  });
+                                                },
+                                              ),
+                                            ),
+                                          );
+                                        } else {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                            SnackBar(
+                                                content:
+                                                    Text("Location not found")),
+                                          );
+                                        }
+                                      } catch (e) {
+                                        print("Error finding location: $e");
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                                "Could not find the location. Please check the address and try again."),
+                                            backgroundColor: Colors.red[700],
+                                          ),
+                                        );
+                                      }
+                                    } else {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        SnackBar(
+                                            content: Text(
+                                                "Please enter a location")),
+                                      );
+                                    }
+                                  },
+                                ),
+                                IconButton(
+                                  icon: Icon(Icons.map, color: Colors.red[800]),
+                                  onPressed: _openMap,
+                                ),
+                              ],
+                            ),
+                          ),
+                          onChanged: (value) {
+                            _getLocationSuggestions(value);
+                          },
+                        ),
+
+                        // Location suggestions dropdown
+                        if (_locationSuggestions.isNotEmpty)
+                          Container(
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color.fromARGB(255, 0, 0, 0)
+                                      .withOpacity(0.2),
+                                  spreadRadius: 1,
+                                  blurRadius: 2,
+                                  offset: Offset(0, 1),
+                                ),
+                              ],
+                              border: Border.all(
+                                  color: const Color.fromARGB(255, 0, 0, 0)),
+                              borderRadius: BorderRadius.only(
+                                bottomLeft: Radius.circular(4),
+                                bottomRight: Radius.circular(4),
+                              ),
+                            ),
+                            child: ListView.builder(
+                              shrinkWrap: true,
+                              physics: NeverScrollableScrollPhysics(),
+                              padding: EdgeInsets.zero,
+                              itemCount: _locationSuggestions.length,
+                              itemBuilder: (context, index) {
+                                return InkWell(
+                                  onTap: () async {
+                                    try {
+                                      List<Location> locations =
+                                          await locationFromAddress(
+                                              _locationSuggestions[index]
+                                                  ['display_name']!);
+                                      if (locations.isNotEmpty) {
+                                        LatLng location = LatLng(
+                                          locations.first.latitude,
+                                          locations.first.longitude,
+                                        );
                                         setState(() {
-                                          _currentLocation = selectedLocation;
-                                          locationController.text = address;
+                                          locationController.text =
+                                              _locationSuggestions[index]
+                                                  ['display_name']!;
+                                          _currentLocation = location;
+                                          _locationSuggestions = [];
                                         });
-                                      },
+                                      }
+                                    } catch (e) {
+                                      print("Error getting coordinates: $e");
+                                    }
+                                  },
+                                  child: Container(
+                                    padding: EdgeInsets.symmetric(
+                                        vertical: 12, horizontal: 16),
+                                    decoration: BoxDecoration(
+                                      border: Border(
+                                        bottom: BorderSide(
+                                          color: index <
+                                                  _locationSuggestions.length -
+                                                      1
+                                              ? const Color.fromARGB(
+                                                  255, 6, 6, 6)
+                                              : Colors.transparent,
+                                          width: 1,
+                                        ),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      _locationSuggestions[index]
+                                          ['display_name']!,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
                                 );
-                              } else {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text("Location not found")),
-                                );
-                              }
-                            } catch (e) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text("Error finding location: ${e.toString()}")),
-                              );
-                            }
-                          } else {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text("Please enter a location")),
-                            );
-                          }
-                        },
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.map, color: Colors.red[800]),
-                        onPressed: _openMap,
-                      ),
-                    ],
-                  ),
-                ),
-                onChanged: (value) {
-                  _getLocationSuggestions(value);
-                },
-              ),
-              
-              // Location suggestions dropdown
-              if (_locationSuggestions.isNotEmpty)
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color.fromARGB(255, 0, 0, 0).withOpacity(0.2),
-                        spreadRadius: 1,
-                        blurRadius: 2,
-                        offset: Offset(0, 1),
-                      ),
-                    ],
-                    border: Border.all(color: const Color.fromARGB(255, 0, 0, 0)),
-                    borderRadius: BorderRadius.only(
-                      bottomLeft: Radius.circular(4),
-                      bottomRight: Radius.circular(4),
-                    ),
-                  ),
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    physics: NeverScrollableScrollPhysics(),
-                    padding: EdgeInsets.zero,
-                    itemCount: _locationSuggestions.length,
-                    itemBuilder: (context, index) {
-                      return InkWell(
-                        onTap: () async {
-                          try {
-                            List<Location> locations = await locationFromAddress(_locationSuggestions[index]['display_name']!);
-                            if (locations.isNotEmpty) {
-                              LatLng location = LatLng(
-                                locations.first.latitude,
-                                locations.first.longitude,
-                              );
-                              setState(() {
-                                locationController.text = _locationSuggestions[index]['display_name']!;
-                                _currentLocation = location;
-                                _locationSuggestions = [];
-                              });
-                            }
-                          } catch (e) {
-                            print("Error getting coordinates: $e");
-                          }
-                        },
-                        child: Container(
-                          padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                          decoration: BoxDecoration(
-                            border: Border(
-                              bottom: BorderSide(
-                                color: index < _locationSuggestions.length - 1
-                                    ? const Color.fromARGB(255, 6, 6, 6)
-                                    : Colors.transparent,
-                                width: 1,
-                              ),
+                              },
                             ),
                           ),
-                          child: Text(
-                            _locationSuggestions[index]['display_name']!,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      );
-                    },
+                      ],
+                    ),
                   ),
-                ),
-            ],
-          ),
-        ),
                   _textField("Phone number", phoneController, isNumeric: true),
                   SizedBox(height: 20),
                   _submitButton(),
@@ -416,7 +480,6 @@ class _RequestPageState extends State<RequestPage> {
       ),
       child: Row(
         children: [
-          
           SizedBox(width: 10),
           Text("Requests",
               style: GoogleFonts.poppins(
@@ -443,7 +506,14 @@ class _RequestPageState extends State<RequestPage> {
             filled: true,
             fillColor: Colors.white,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            suffixIcon: hasIcon ? IconButton(onPressed: _openMap, icon: Icon(Icons.location_on,color: Colors.red,)) : null,
+            suffixIcon: hasIcon
+                ? IconButton(
+                    onPressed: _openMap,
+                    icon: Icon(
+                      Icons.location_on,
+                      color: Colors.red,
+                    ))
+                : null,
           ),
         ),
         SizedBox(height: 10),
@@ -451,7 +521,8 @@ class _RequestPageState extends State<RequestPage> {
     );
   }
 
-  Widget _dropdownField(String label, List<String> items, ValueChanged<String?> onChanged) {
+  Widget _dropdownField(
+      String label, List<String> items, ValueChanged<String?> onChanged) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -463,7 +534,9 @@ class _RequestPageState extends State<RequestPage> {
             fillColor: Colors.white,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
-          items: items.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+          items: items
+              .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+              .toList(),
           onChanged: onChanged,
         ),
         SizedBox(height: 10),
@@ -471,7 +544,8 @@ class _RequestPageState extends State<RequestPage> {
     );
   }
 
-  Widget _datePickerField(String label, TextEditingController controller, VoidCallback onTap) {
+  Widget _datePickerField(
+      String label, TextEditingController controller, VoidCallback onTap) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -506,16 +580,14 @@ class _RequestPageState extends State<RequestPage> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.black),
-              ),
-               child: Text(
+              border: Border.all(color: Colors.black),
+            ),
+            child: Text(
               selectedTime ?? "Select Time",
               style: GoogleFonts.poppins(fontSize: 16),
             ),
-            ),
-           
           ),
-        
+        ),
         SizedBox(height: 10),
       ],
     );
@@ -524,19 +596,25 @@ class _RequestPageState extends State<RequestPage> {
   Widget _submitButton() {
     return ElevatedButton(
       style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.red.shade900,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+        backgroundColor: Colors.red.shade900,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
       onPressed: submitRequest,
       child: SizedBox(
-          width: double.infinity,
-          child: Center(
-              child: Text("Next",
-                  style: GoogleFonts.poppins(
-                      fontSize: 16, fontWeight: FontWeight.w600)))),
+        width: double.infinity,
+        child: Center(
+          child: Text(
+            "Next",
+            style: GoogleFonts.poppins(
+                color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ),
     );
   }
 }
-
 
 class MapPage extends StatefulWidget {
   final LatLng initialLocation;
@@ -560,34 +638,35 @@ class _MapPageState extends State<MapPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text("Select Location"), backgroundColor: Colors.red[800]),
+      appBar: AppBar(
+          title: Text("Select Location"), backgroundColor: Colors.red[800]),
       body: FlutterMap(
-  options: MapOptions(
-    center: _selectedLocation,
-    zoom: 15.0,
-    onTap: (tapPosition, point) {
-      setState(() {
-        _selectedLocation = point;
-      });
-    },
-  ),
-  children: [
-    TileLayer(
-      urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-      subdomains: ['a', 'b', 'c'],
-    ),
-    MarkerLayer(
-      markers: [
-        Marker(
-          point: _selectedLocation,
-          width: 40,
-          height: 40,
-          child: Icon(Icons.location_pin, color: Colors.red, size: 40),
+        options: MapOptions(
+          center: _selectedLocation,
+          zoom: 15.0,
+          onTap: (tapPosition, point) {
+            setState(() {
+              _selectedLocation = point;
+            });
+          },
         ),
-      ],
-    ),
-  ],
-),
+        children: [
+          TileLayer(
+            urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            subdomains: ['a', 'b', 'c'],
+          ),
+          MarkerLayer(
+            markers: [
+              Marker(
+                point: _selectedLocation,
+                width: 40,
+                height: 40,
+                child: Icon(Icons.location_pin, color: Colors.red, size: 40),
+              ),
+            ],
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
           widget.onLocationSelected(_selectedLocation);

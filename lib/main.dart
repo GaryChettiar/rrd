@@ -1,22 +1,24 @@
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'dart:math';
 import 'package:firebase_core/firebase_core.dart';
+// import 'package:rrd/FirebaseAPI.dart';
 import 'package:rrd/HomePage.dart';
 import 'package:rrd/Login.dart';
 import 'package:rrd/Signup.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:rrd/SignUp2.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase .initializeApp();
-  
+  await Firebase.initializeApp();
+   final notificationService = NotificationService();
+  await notificationService.initialize();
   runApp(MaterialApp(
     debugShowCheckedModeBanner: false,
     home: AuthWrapper(),
   ));
 }
-
-
 
 class AuthWrapper extends StatelessWidget {
   @override
@@ -36,16 +38,18 @@ class AuthWrapper extends StatelessWidget {
     );
   }
 }
-class IntroScreen extends StatefulWidget  {
+
+class IntroScreen extends StatefulWidget {
   const IntroScreen({super.key});
 
   @override
   State<IntroScreen> createState() => _IntroScreenState();
 }
 
-class _IntroScreenState extends State<IntroScreen> with SingleTickerProviderStateMixin  {
-   late AnimationController _animationController;
-     @override
+class _IntroScreenState extends State<IntroScreen>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animationController;
+  @override
   void initState() {
     super.initState();
     _animationController = AnimationController(
@@ -59,6 +63,7 @@ class _IntroScreenState extends State<IntroScreen> with SingleTickerProviderStat
     _animationController.dispose();
     super.dispose();
   }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -88,54 +93,54 @@ class _IntroScreenState extends State<IntroScreen> with SingleTickerProviderStat
                 ),
               ),
               SizedBox(height: 40),
-            SizedBox(
-  width: MediaQuery.sizeOf(context).width*0.5, // Makes both buttons equal in width
-  child: ElevatedButton(
-    onPressed: () {
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => LoginPage()),
-      );
-    },
-    style: ElevatedButton.styleFrom(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(30),
-        side: BorderSide(color: Colors.red),
-      ),
-      backgroundColor: Colors.white,
-      foregroundColor: Colors.red,
-    ),
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Text("Login"),
-    ),
-  ),
-),
-SizedBox(height: 10),
-SizedBox(
-  width: MediaQuery.sizeOf(context).width*0.5, // Ensures equal width as the login button
-  child: ElevatedButton(
-    onPressed: () {
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => SignUpPage()),
-      );
-    },
-    style: ElevatedButton.styleFrom(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(30),
-      ),
-      backgroundColor: Colors.red,
-      foregroundColor: Colors.white,
-    ),
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Text("Sign Up"),
-    ),
-  ),
-),
-
-              
+              SizedBox(
+                width: MediaQuery.sizeOf(context).width *
+                    0.5, // Makes both buttons equal in width
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => LoginPage()),
+                    );
+                  },
+                  style: ElevatedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30),
+                      side: BorderSide(color: Colors.red),
+                    ),
+                    backgroundColor: Colors.white,
+                    foregroundColor: Colors.red,
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text("Login"),
+                  ),
+                ),
+              ),
+              SizedBox(height: 10),
+              SizedBox(
+                width: MediaQuery.sizeOf(context).width *
+                    0.5, // Ensures equal width as the login button
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => SignUpPage()),
+                    );
+                  },
+                  style: ElevatedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text("Sign Up"),
+                  ),
+                ),
+              ),
               Spacer(),
             ],
           ),
@@ -144,7 +149,6 @@ SizedBox(
     );
   }
 }
-
 
 class WavePainter extends CustomPainter {
   final double animationValue;
@@ -160,7 +164,7 @@ class WavePainter extends CustomPainter {
     Path path2 = Path();
 
     double waveHeight1 = 80 * sin(animationValue * pi); // Bigger wave height
-    double waveHeight2 = 90 * cos(animationValue * pi); 
+    double waveHeight2 = 90 * cos(animationValue * pi);
 
     double waveWidthFactor = 1.5; // Increases the width of waves
 
@@ -169,14 +173,20 @@ class WavePainter extends CustomPainter {
 
     for (double i = 0; i < size.width; i++) {
       path1.lineTo(
-        i, 
-        size.height - waveHeight1 * sin((i / size.width) * 2 * pi / waveWidthFactor) // Wider waves
-      );
+          i,
+          size.height -
+              waveHeight1 *
+                  sin((i / size.width) *
+                      2 *
+                      pi /
+                      waveWidthFactor) // Wider waves
+          );
 
       path2.lineTo(
-        i, 
-        size.height - waveHeight2 * cos((i / size.width) * 2 * pi / waveWidthFactor + pi / 3)
-      );
+          i,
+          size.height -
+              waveHeight2 *
+                  cos((i / size.width) * 2 * pi / waveWidthFactor + pi / 3));
     }
 
     path1.lineTo(size.width, size.height);

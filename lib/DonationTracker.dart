@@ -74,13 +74,12 @@ class _DonationTrackerState extends State<DonationTracker> {
         }
       }
     } catch (e) {
-      print("Error fetching donation history: $e");
-      setState(() {
-        _isLoading = false;
-      });
-      
+      print("Error loading donation history: $e");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error loading donation history"))
+        SnackBar(
+          content: Text("Unable to load your donation history. Please try again later."),
+          backgroundColor: Colors.red[700],
+        )
       );
     }
   }
@@ -160,12 +159,11 @@ class _DonationTrackerState extends State<DonationTracker> {
       }
     } catch (e) {
       print("Error adding donation: $e");
-      setState(() {
-        _isLoading = false;
-      });
-      
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error adding donation record"))
+        SnackBar(
+          content: Text("Could not add your donation record. Please try again."),
+          backgroundColor: Colors.red[700],
+        )
       );
     }
   }
@@ -513,12 +511,11 @@ class _DonationTrackerState extends State<DonationTracker> {
       }
     } catch (e) {
       print("Error deleting donation: $e");
-      setState(() {
-        _isLoading = false;
-      });
-      
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error deleting donation record"))
+        SnackBar(
+          content: Text("Could not delete the donation record. Please try again."),
+          backgroundColor: Colors.red[700],
+        )
       );
     }
   }

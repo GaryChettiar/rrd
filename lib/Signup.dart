@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:rrd/Login.dart';
 import 'package:rrd/SignUp2.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class SignUpPage extends StatefulWidget {
   @override
@@ -13,45 +14,62 @@ class _SignUpPageState extends State<SignUpPage> {
   final TextEditingController passwordController = TextEditingController();
   final TextEditingController confirmPasswordController = TextEditingController();
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  String selectedEntity = 'user'; // Default to user
 
   bool obscurePassword = true;
   bool obscureConfirmPassword = true;
-  bool isLoading = false;
+  bool _isLoading = false;
 
-  Future<void> _signUp() async {
-    if (passwordController.text != confirmPasswordController.text) {
+  void _signUp() async {
+    if (emailController.text.isEmpty ||
+        passwordController.text.isEmpty ||
+        confirmPasswordController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Passwords do not match!")),
+        SnackBar(content: Text("Please fill all the fields")),
       );
       return;
     }
 
-    setState(() {
-      isLoading = true;
-    });
-
-    try {
-      await _auth.createUserWithEmailAndPassword(
-        email: emailController.text.trim(),
-        password: passwordController.text.trim(),
-      );
+    if (passwordController.text != confirmPasswordController.text) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Account Created Successfully!")),
+        SnackBar(content: Text("Passwords do not match")),
       );
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => SignUpPage2()),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error: ${e.toString()}")),
-      );
+      return;
     }
 
-    setState(() {
-      isLoading = false;
-    });
+    try {
+      setState(() {
+        _isLoading = true;
+      });
+
+      // Create user with email and password
+      UserCredential userCredential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: emailController.text.trim(),
+        password: passwordController.text,
+      );
+
+      // Navigate to SignUpPage2 with the selected entity
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => SignUpPage2(selectedEntity: selectedEntity),
+        ),
+      );
+    } on FirebaseAuthException catch (e) {
+      String message = "An error occurred";
+      if (e.code == 'weak-password') {
+        message = "The password provided is too weak.";
+      } else if (e.code == 'email-already-in-use') {
+        message = "An account already exists for that email.";
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   @override
@@ -75,6 +93,34 @@ class _SignUpPageState extends State<SignUpPage> {
                 ),
               ),
               SizedBox(height: 20),
+
+              // Entity Selection
+              Text("Select Account Type", style: TextStyle(fontSize: 14, color: Colors.black54)),
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: selectedEntity,
+                    isExpanded: true,
+                    items: [
+                      DropdownMenuItem(value: 'user', child: Text('User')),
+                      DropdownMenuItem(value: 'hospital', child: Text('Hospital')),
+                      DropdownMenuItem(value: 'bloodbank', child: Text('Blood Bank')),
+                    ],
+                    onChanged: (value) {
+                      setState(() {
+                        selectedEntity = value!;
+                      });
+                    },
+                  ),
+                ),
+              ),
+              SizedBox(height: 16),
 
               // Email Input
               Text("E-mail", style: TextStyle(fontSize: 14, color: Colors.black54)),
@@ -127,7 +173,7 @@ class _SignUpPageState extends State<SignUpPage> {
 
               // Sign Up Button
               Center(
-                child: isLoading
+                child: _isLoading
                     ? CircularProgressIndicator()
                     : ElevatedButton(
                         onPressed: _signUp,
