@@ -104,9 +104,8 @@ class _HomePageState extends State<HomePage> {
   bool isVerified = false;
   Map<String, bool> answers = {};
   bool isDonor = false;
-  String currentLocation = "Fetching location...";
-  LatLng? _currentLocation;
-  String? _entityType;
+  String currentLocation = "Fetching location..."; // Add this to store the user's location
+  LatLng? _currentLocation; // Add this to store the coordinates
 
   Future<void> checkDonorStatus() async {
     try {
@@ -253,7 +252,7 @@ Future<List<Map<String, dynamic>>> fetchBloodBanks(Position position) async {
       headers: {
         'User-Agent': 'YourAppName/1.0 (garychettiar@gmail.com)', // Update this
       },
-    ).timeout(Duration(seconds: 5));
+    );
 
     print("Response Status: ${response.statusCode}");
     print("Response Body: ${response.body}");
@@ -285,7 +284,7 @@ Future<List<Map<String, dynamic>>> fetchHospitals(Position position) async {
       headers: {
         'User-Agent': 'YourAppName/1.0 (garychettiar@gmail.com)', // Change this!
       },
-    ).timeout(Duration(seconds: 5));
+    );
 
     print("Response Status: ${response.statusCode}");
     print("Response Body: ${response.body}");
@@ -313,183 +312,150 @@ for (var item in data) {
     return [];
   }
 }
-
 Future<void> showHospitals(BuildContext context) async {
   try {
-    // First check if we already have the current location
-    Position? position;
-    
-    if (_currentLocation != null) {
-      // Use the existing current location if available
-      position = Position(
-        longitude: _currentLocation!.longitude, 
-        latitude: _currentLocation!.latitude,
-        timestamp: DateTime.now(),
-        accuracy: 10,
-        altitude: 0,
-        heading: 0,
-        speed: 0,
-        speedAccuracy: 0,
-        altitudeAccuracy: 0,
-        headingAccuracy: 0
-      );
-    } else {
-      // Otherwise get the location permission and fetch position
-      LocationPermission permission = await Geolocator.checkPermission();
+    // Request permission and get the user's location
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Location permission is required.")),
-          );
-          return;
-        }
-      }
-
-      // Get position with shorter timeout
-      position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.medium,
-        timeLimit: Duration(seconds: 1),
-      ).catchError((e) {
-        print("Error getting position: $e");
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Couldn't get your location. Please try again.")),
+          SnackBar(content: Text("Location permission is required.")),
         );
-        return null;
-      });
+        return;
+      }
     }
-    
-    // If we couldn't get position, return
-    if (position == null) return;
 
-    // Navigate to map immediately with empty data
-    if (!context.mounted) return;
-    
+    if (permission == LocationPermission.deniedForever) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Location permissions are permanently denied.")),
+      );
+      return;
+    }
+
+    Position position = await Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.high,
+    );
+    print("User's Location: Lat ${position.latitude}, Lon ${position.longitude}");
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Center(child: CircularProgressIndicator()),
+    );
+
+    print("Fetching hospitals for position: ${position.latitude}, ${position.longitude}");
+
+    List<Map<String, dynamic>> hospitals = await fetchHospitals(position);
+
+    print("Received hospital data:");
+    for (var hospital in hospitals) {
+      print("Hospital: ${hospital['name']}, Latitude: ${hospital['lat']}, Longitude: ${hospital['lon']}");
+    }
+
+    print("Total hospitals received: ${hospitals.length}");
+
+    Navigator.pop(context); // Close loading dialog
+
+    // Pass hospitals directly to the widget
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => HospitalMapScreen(
-          position: position!, // Use non-null assertion since we checked above
-          hospitals: [], // Start with empty data
-          isLoading: true, // Add this flag to the widget
+          position: position, 
+          hospitals: hospitals, // Pass the data here
         ),
       ),
     );
+
   } catch (e) {
+    // Error handling remains the same
     print("Error: $e");
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to fetch hospitals. Please try again.")),
+      Navigator.pop(context); // Close loading dialog
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text("Error"),
+          content: Text("Failed to fetch hospitals. Please try again."),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text("Close"),
+            ),
+          ],
+        ),
       );
     }
   }
-}
-
-Future<void> showBloodBanks(BuildContext context) async {
+}Future<void> showBloodBanks(BuildContext context) async {
   try {
-    // First check if we already have the current location
-    Position? position;
-    
-    if (_currentLocation != null) {
-      // Use the existing current location if available
-      position = Position(
-        longitude: _currentLocation!.longitude, 
-        latitude: _currentLocation!.latitude,
-        timestamp: DateTime.now(),
-        accuracy: 10,
-        altitude: 0,
-        heading: 0,
-        speed: 0,
-        speedAccuracy: 0,
-        altitudeAccuracy: 0,
-        headingAccuracy: 0
-      );
-    } else {
-      // Otherwise get the location permission and fetch position
-      LocationPermission permission = await Geolocator.checkPermission();
+    // Get permission and location
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Location permission is required.")),
-          );
-          return;
-        }
-      }
-
-      // Get position with shorter timeout
-      position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.medium,
-        timeLimit: Duration(seconds: 1),
-      ).catchError((e) {
-        print("Error getting position: $e");
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Couldn't get your location. Please try again.")),
+          SnackBar(content: Text("Location permission is required.")),
         );
-        return null;
-      });
+        return;
+      }
     }
-    
-    // If we couldn't get position, return
-    if (position == null) return;
 
-    // Navigate to map immediately with empty data
-    if (!context.mounted) return;
+    if (permission == LocationPermission.deniedForever) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Location permissions are permanently denied.")),
+      );
+      return;
+    }
+
+    Position position = await Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.medium, // Reduce accuracy to save time
+      timeLimit: Duration(seconds: 5), // Timeout to prevent long waiting
+    );
+
+    print("User's Location: ${position.latitude}, ${position.longitude}");
+
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Center(child: CircularProgressIndicator()),
+    );
+
+    // Fetch blood banks
+    List<Map<String, dynamic>> bloodBanks = await fetchBloodBanks(position);
     
+    // Close loading indicator
+    Navigator.pop(context);
+
+    // Navigate to the map screen with the data
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => BloodBankMapScreen(
-          position: position!, // Use non-null assertion since we checked above
-          bloodBanks: [], // Start with empty data
-          isLoading: true, // Add this flag to the widget
+          position: position,
+          bloodBanks: bloodBanks,
         ),
       ),
     );
   } catch (e) {
     print("Error: $e");
     if (context.mounted) {
+      Navigator.pop(context); // Close dialog if open
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to fetch blood banks. Please try again.")),
+        SnackBar(content: Text("Failed to fetch blood banks.")),
       );
     }
   }
 }
 
+
   @override
   void initState() {
     super.initState();
-    _checkUserType();
     checkDonorStatus();
-    fetchCurrentLocation();
-  }
-
-  Future<void> _checkUserType() async {
-    try {
-      User? user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        // Check each collection to determine user type
-        final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-        final hospitalDoc = await FirebaseFirestore.instance.collection('hospitals').doc(user.uid).get();
-        final bloodbankDoc = await FirebaseFirestore.instance.collection('bloodbanks').doc(user.uid).get();
-
-        if (userDoc.exists) {
-          setState(() {
-            _entityType = 'user';
-          });
-        } else if (hospitalDoc.exists) {
-          setState(() {
-            _entityType = 'hospital';
-          });
-        } else if (bloodbankDoc.exists) {
-          setState(() {
-            _entityType = 'bloodbank';
-          });
-        }
-      }
-    } catch (e) {
-      print("Error checking user type: $e");
-    }
+    fetchCurrentLocation(); // Fetch the user's location on initialization
   }
 
   @override
@@ -515,12 +481,14 @@ Future<void> showBloodBanks(BuildContext context) async {
                 Icon(Icons.location_on, color: Color(0xFFA22322)),
                 SizedBox(width: 8),
                 GestureDetector(
-                  onTap: openMapToChangeLocation,
+                  onTap: openMapToChangeLocation, // Make location text clickable
                   child: Text(
                     currentLocation,
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
+                      // decoration: TextDecoration.underline, // Add underline to indicate clickability
+                      // color: Colors.blue, 
                     ),
                   ),
                 ),
@@ -541,73 +509,67 @@ Future<void> showBloodBanks(BuildContext context) async {
             ),
             SizedBox(height: 20),
       
-            // Only show verification button for users
-            if (_entityType == 'user' && !isDonor) ...[
-              ElevatedButton(
-                onPressed: () async {
-                  Map<String, bool>? result = await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => VerificationPage(
-                        question: "Is your weight less than 50kg?",
-                        questionKey: "weight",
+            !isDonor ? ElevatedButton(
+              onPressed: () async {
+                Map<String, bool>? result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => VerificationPage(
+                      question: "Is your weight less than 50kg?",
+                      questionKey: "weight",
+                      nextPage: VerificationPage(
+                        question: "Are you suffering from any of the below?",
+                        questionKey: "suffering",
+                        subQuestions: [
+                          "Transmittable disease",
+                          "Asthma",
+                          "Cardiac arrest",
+                          "Hypertension",
+                          "Blood pressure",
+                          "Diabetes",
+                          "Cancer"
+                        ],
                         nextPage: VerificationPage(
-                          question: "Are you suffering from any of the below?",
-                          questionKey: "suffering",
-                          subQuestions: [
-                            "Transmittable disease",
-                            "Asthma",
-                            "Cardiac arrest",
-                            "Hypertension",
-                            "Blood pressure",
-                            "Diabetes",
-                            "Cancer"
-                          ],
+                          question: "Have you undergone tattoo in last 6 months?",
+                          questionKey: "tattoo",
                           nextPage: VerificationPage(
-                            question: "Have you undergone tattoo in last 6 months?",
-                            questionKey: "tattoo",
-                            nextPage: VerificationPage(
-                              question: "Have you undergone immunization in the past one month?",
-                              questionKey: "immunization",
-                              isLastPage: true,
-                              nextPage: null,
-                            ),
+                            question: "Have you undergone immunization in the past one month?",
+                            questionKey: "immunization",
+                            isLastPage: true, // Mark last page
+                            nextPage: null,
                           ),
                         ),
                       ),
                     ),
-                  );
+                  ),
+                );
 
-                  if (result != null) {
-                    setState(() {
-                      answers = result;
-                      isVerified = answers.values.every((answer) => answer == false);
-                    });
-                  }
-                  if (isVerified) {
-                    updateDonorStatus();
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: isVerified ? Color(0xff64F472) : Color(0xFFA22322),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                  padding: EdgeInsets.symmetric(vertical: 16),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(isVerified ? "You're eligible to Donate" : "Please verify for donating",
-                        style: TextStyle(fontSize: 16, color: Colors.white)),
-                    SizedBox(width: 10),
-                    Icon(Icons.info_outline, color: Colors.white),
-                  ],
-                ),
+                if (result != null) {
+                  setState(() {
+                    answers = result;
+                    isVerified = answers.values.every((answer) => answer == false);
+                  });
+                }
+                if (isVerified) {
+                  updateDonorStatus();
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isVerified ? Color(0xff64F472) : Color(0xFFA22322),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                padding: EdgeInsets.symmetric(vertical: 16),
               ),
-              SizedBox(height: 16),
-            ] else if (_entityType == 'user') ...[
-              Container(height: 25),
-              SizedBox(height: 16),
-            ],
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(isVerified ? "You're eligible to Donate" : "Please verify for donating",
+                      style: TextStyle(fontSize: 16, color: Colors.white)),
+                  SizedBox(width: 10),
+                  Icon(Icons.info_outline, color: Colors.white),
+                ],
+              ),
+            ) : Container(height: 25),
+            SizedBox(height: 16),
       
             InkWell(
               onTap: () {

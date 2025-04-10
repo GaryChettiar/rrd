@@ -206,35 +206,35 @@ class _LoginPageState extends State<LoginPage> {
                 ],
               ),
               SizedBox(height: 20),
-              Center(
-                child: ElevatedButton(
-                  onPressed: () {}, // Implement Google Sign-In later
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    elevation: 2,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      side: BorderSide(color: Colors.grey.shade300),
-                    ),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        vertical: 10, horizontal: 20),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Image.network(
-                          'https://banner2.cleanpng.com/20181108/vqy/kisspng-youtube-google-logo-google-images-google-account-consulting-crm-the-1-recommended-crm-for-g-suite-1713925083723.webp',
-                          height: 24,
-                        ),
-                        SizedBox(width: 10),
-                        Text("Sign in with Google",
-                            style: TextStyle(color: Colors.black54)),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+              // Center(
+              //   child: ElevatedButton(
+              //     onPressed: () {}, // Implement Google Sign-In later
+              //     style: ElevatedButton.styleFrom(
+              //       backgroundColor: Colors.white,
+              //       elevation: 2,
+              //       shape: RoundedRectangleBorder(
+              //         borderRadius: BorderRadius.circular(8),
+              //         side: BorderSide(color: Colors.grey.shade300),
+              //       ),
+              //     ),
+              //     child: Padding(
+              //       padding: const EdgeInsets.symmetric(
+              //           vertical: 10, horizontal: 20),
+              //       child: Row(
+              //         mainAxisSize: MainAxisSize.min,
+              //         children: [
+              //           Image.network(
+              //             'https://banner2.cleanpng.com/20181108/vqy/kisspng-youtube-google-logo-google-images-google-account-consulting-crm-the-1-recommended-crm-for-g-suite-1713925083723.webp',
+              //             height: 24,
+              //           ),
+              //           SizedBox(width: 10),
+              //           Text("Sign in with Google",
+              //               style: TextStyle(color: Colors.black54)),
+              //         ],
+              //       ),
+              //     ),
+              //   ),
+              // ),
               SizedBox(height: 20),
               Center(
                 child: Text.rich(

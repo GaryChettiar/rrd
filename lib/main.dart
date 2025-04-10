@@ -7,15 +7,16 @@ import 'package:rrd/HomePage.dart';
 import 'package:rrd/Login.dart';
 import 'package:rrd/Signup.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:rrd/SignUp2.dart';
 
 void main() async {
+  // Ensure Flutter is initialized
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize Firebase
   await Firebase.initializeApp();
-   final notificationService = NotificationService();
-  await notificationService.initialize();
+  
+  // Run the app
   runApp(MaterialApp(
-    debugShowCheckedModeBanner: false,
     home: AuthWrapper(),
   ));
 }

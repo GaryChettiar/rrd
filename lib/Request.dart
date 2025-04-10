@@ -202,7 +202,9 @@ class _RequestPageState extends State<RequestPage> {
       };
 
       print("Request Data: $requestData");
-
+        if (widget.onRequestSubmitted != null) {
+        widget.onRequestSubmitted!();
+      }
       await callable.call(requestData);
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -221,9 +223,7 @@ class _RequestPageState extends State<RequestPage> {
       phoneController.clear();
 
       // Call the callback to navigate to home page
-      if (widget.onRequestSubmitted != null) {
-        widget.onRequestSubmitted!();
-      }
+  
     } catch (e) {
       print(e);
       ScaffoldMessenger.of(context).showSnackBar(

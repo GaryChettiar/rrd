@@ -318,10 +318,11 @@ Future<void> _fetchUserLocation() async {
           _currentLocation!.longitude,
           donorLat,
           donorLon,
+          
         ) / 1000; // Convert meters to KM
 
         // Only add donors within 3 km radius
-        if (distance <= 3.0) {
+        if (distance <= 10.0) {
           nearbyDonors.add(Donor(
             name: doc['name'],
             bloodType: doc['bloodType'],
@@ -334,7 +335,7 @@ Future<void> _fetchUserLocation() async {
       }
     }
 
-    print("Nearby Eligible Donors within 3km: ${nearbyDonors.length}");
+    print("Nearby Eligible Donors within 10km: ${nearbyDonors.length}");
     
     // Sort donors by distance
     nearbyDonors.sort((a, b) => a.distance.compareTo(b.distance));
@@ -342,7 +343,7 @@ Future<void> _fetchUserLocation() async {
     if (nearbyDonors.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("No eligible donors found within 3 km radius"),
+          content: Text("No eligible donors found within 10 km radius"),
           duration: Duration(seconds: 2),
           behavior: SnackBarBehavior.floating,
         ),
@@ -359,7 +360,7 @@ Future<void> _fetchUserLocation() async {
      
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text("Found ${nearbyDonors.length} eligible donors within 3 km!"),
+        content: Text("Found ${nearbyDonors.length} eligible donors within 10 km!"),
         duration: Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
       ),
